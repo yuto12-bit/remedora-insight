@@ -101,10 +101,11 @@ const App = () => {
     }
 
     // --- Calculation Logic ---
-    const vCurrent = parseInt(visits) || 0;
-    const vPrev = parseInt(prevVisits) || 0;
-    const cCurrent = parseInt(clicks) || 0;
-    const cPrev = parseInt(prevClicks) || 0;
+    const vCurrent = parseInt(visits, 10) || 0;
+    const vPrev = parseInt(prevVisits, 10) || 0;
+    const cCurrent = parseInt(clicks, 10) || 0;
+    const cPrev = parseInt(prevClicks, 10) || 0;
+
 
     const formatDiff = (curr, prev, unit) => {
       const diff = curr - prev;
@@ -196,13 +197,31 @@ const App = () => {
 - 今週に実施した変更（任意）：${recentChanges || '特になし'}
 - 計算済み差分：見た人数の差分 ${visitsDeltaFormatted} / 反応数の差分 ${clicksDeltaFormatted}
 - 前週が0か：見た人数 ${prevVisitsIsZero} / 反応数 ${prevClicksIsZero}
+- 重要：もし「前週が0か：見た人数 はい」または「前週が0か：反応数 はい」のどちらかが該当する場合、
+  出力本文に次の文字列を絶対に含めない：%, ％, 倍, パーセント, percent
+  （含めそうになったら、該当表現を削除して言い換えた文章にしてから出力すること）
 
 このデータをもとに、経営者向けのレポートを作成してください。
 `;
 
     try {
       const result = await callGemini(userPrompt, systemPrompt);
-      setReport(result);
+
+      // 前週0のときは%/倍表現を物理的に禁止（モデル違反の保険）
+      const needBanRatio = (prevVisitsIsZero === 'はい') || (prevClicksIsZero === 'はい');
+    if (needBanRatio) {
+      const banned = ['%', '％', '倍', 'パーセント', 'percent'];
+      const hit = banned.find(w => result.includes(w));
+    if (hit) {
+    throw new Error(
+      `前週が0のため、比率表現（${hit}）は禁止です。` +
+      `\nもう一度生成してください（%/倍を使わない出力にします）。`
+    );
+  }
+}
+
+setReport(result);
+
       
       // Reset tools
       setActiveTool(null);
@@ -282,12 +301,21 @@ ${safetyGuard}`;
   };
 
   const copyToClipboard = (text, type) => {
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
+  if (!text) return;
+
+  navigator.clipboard.writeText(text)
+    .then(() => {
       setCopyStatus(prev => ({ ...prev, [type]: true }));
       setTimeout(() => setCopyStatus(prev => ({ ...prev, [type]: false })), 2000);
+    })
+    .catch(() => {
+      setError(
+        "この端末/ブラウザではコピーがブロックされました。\n" +
+        "対策：テキスト欄を長押し → 全選択 → コピーで対応してください。"
+      );
     });
-  };
+};
+
 
   // --- UI Components ---
   const ToolCard = ({ id, icon: Icon, title, desc }) => (
