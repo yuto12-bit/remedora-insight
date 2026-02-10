@@ -8,27 +8,41 @@ import {
   Loader2, 
   Copy, 
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  TrendingUp,
+  History
 } from 'lucide-react';
 
 const App = () => {
   // --- State Management ---
   const [apiKey, setApiKey] = useState('');
+  
+  // Basic Info
+  const [clientName, setClientName] = useState('');
   const [industry, setIndustry] = useState('建設・建築');
+  const [url, setUrl] = useState('');
+
+  // Metrics: Current Week
   const [visits, setVisits] = useState('');
   const [clicks, setClicks] = useState('');
-  const [source, setSource] = useState('Indeed');
+  
+  // Metrics: Previous Week
+  const [prevVisits, setPrevVisits] = useState('');
+  const [prevClicks, setPrevClicks] = useState('');
 
+  // Optional Metrics
+  const [applications, setApplications] = useState('');
+  const [recentChanges, setRecentChanges] = useState('');
+
+  // Output States
   const [report, setReport] = useState('');
-  const [reportType, setReportType] = useState(null); // 'basic' | 'ai'
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Tools States
   const [activeTool, setActiveTool] = useState(null);
   const [toolOutput, setToolOutput] = useState('');
   const [toolLoading, setToolLoading] = useState(false);
-
-  // Tool Inputs State
   const [toolInputs, setToolInputs] = useState({
     jobType: '',
     originalText: '',
@@ -38,14 +52,12 @@ const App = () => {
     targetPersona: ''
   });
 
-  // UI Feedback State
   const [copyStatus, setCopyStatus] = useState({ report: false, tool: false });
 
   // --- Logic ---
 
   // Gemini API Call Helper
   const callGemini = async (prompt, systemInstruction) => {
-    // 1. Try manual input first, then default (if any)
     const keyToUse = apiKey.trim();
 
     if (!keyToUse) {
@@ -80,99 +92,117 @@ const App = () => {
     }
   };
 
-  // Basic Report Logic
-  const generateBasicReport = () => {
-    const visitsNum = parseInt(visits);
-    const clicksNum = parseInt(clicks);
-
-    if (isNaN(visitsNum) || isNaN(clicksNum)) {
-      setError("数値を正しく入力してください。");
+  // Generate Report Logic (Updated for Translator Persona)
+  const generateReport = async () => {
+    // Validation
+    if (!clientName || !visits || !clicks || !prevVisits || !prevClicks) {
+      setError("必須項目（クライアント名、今週・前週の数値）をすべて入力してください。");
       return;
     }
 
-    setError(null);
-    setLoading(true);
+    // --- Calculation Logic ---
+    const vCurrent = parseInt(visits) || 0;
+    const vPrev = parseInt(prevVisits) || 0;
+    const cCurrent = parseInt(clicks) || 0;
+    const cPrev = parseInt(prevClicks) || 0;
 
-    // Simulate slight delay for UX
-    setTimeout(() => {
-      let status = "", nextStep = "", analysis = "";
-      const rate = visitsNum > 0 ? (clicksNum / visitsNum) * 100 : 0;
+    const formatDiff = (curr, prev, unit) => {
+      const diff = curr - prev;
+      if (diff === 0) return `±0${unit}`;
+      return diff > 0 ? `+${diff}${unit}` : `${diff}${unit}`;
+    };
 
-      if (visitsNum < 20) {
-        status = "入口に課題";
-        analysis = `今週、求人ページまでたどり着いたのは${visitsNum}人のみです。中身が良いか悪いか判断する以前に、そもそも知られていません。`;
-        nextStep = `来週は「${source}」に掲載している写真またはタイトル（見出し）を1箇所だけ変更し、クリックされる数を増やします。`;
-      } else if (rate < 1.0) {
-        status = "中身に課題";
-        analysis = `今週は${visitsNum}人がページを見ましたが、ボタンを押したのは${clicksNum}人でした。興味を持って訪れたものの、「何かが違う」と感じて帰っています。`;
-        nextStep = `来週は求人ページの冒頭にある「給与」または「休日」の表記を、より分かりやすく具体的に書き直します。`;
-      } else {
-        status = "順調";
-        analysis = `今週は${visitsNum}人が見て、そのうち${clicksNum}人が興味を持ってボタンを押しました。100人が見れば${Math.round(rate * 10) / 10}人が反応する計算で、地域の平均以上の成果が出ています。`;
-        nextStep = `現在の内容を変に触るとバランスが崩れます。来週は変更を加えず、応募があった際に「どこを見て連絡したか」を電話口で聞くことだけ徹底してください。`;
-      }
-
-      const reportText = `【今週の結論】\n${status}\n\n【事実の可視化】\n${analysis}\n\n【次の一手】\n${nextStep}\n\n（REMEDORA Web監査役）`;
-      
-      setReport(reportText);
-      setReportType('basic');
-      setLoading(false);
-      
-      // Reset tools
-      setActiveTool(null);
-      setToolOutput('');
-    }, 500);
-  };
-
-  // AI Report Logic
-  const generateAIReport = async () => {
-    const visitsNum = parseInt(visits);
-    const clicksNum = parseInt(clicks);
-
-    if (isNaN(visitsNum) || isNaN(clicksNum)) {
-      setError("数値を正しく入力してください。");
-      return;
-    }
+    const visitsDeltaFormatted = formatDiff(vCurrent, vPrev, '人');
+    const clicksDeltaFormatted = formatDiff(cCurrent, cPrev, '回');
+    const prevVisitsIsZero = vPrev === 0 ? 'はい' : 'いいえ';
+    const prevClicksIsZero = cPrev === 0 ? 'はい' : 'いいえ';
+    // -------------------------
 
     setError(null);
     setLoading(true);
     setReport('');
 
+    // System Prompt: Defined strictly based on user requirements
     const systemPrompt = `
-あなたは地元の建設・介護・車検工場の社長を支える、実直で誠実なREMEDORAのWeb監査役です。
-専門用語（CVR、セッション、エンゲージメントなど）は一切使用禁止です。
-入力された数値に基づき、経営者に対して厳しいが愛のある報告を行ってください。
-業種：${industry}
+あなたは建設・介護・車検業界に特化した「採用導線の数字翻訳者」です。
+専門用語（CVR, セッション, インプレッション等）は一切使わず、数字を“お店のたとえ”に置き換えて、経営者が一読で理解できる文章を作成してください。
 
-判定基準：
-1. 訪問数20未満 → 「入口に課題」。認知不足。
-2. 訪問数20以上かつ反応率1%未満 → 「中身に課題」。魅力不足。
-3. 反応率1%以上 → 「順調」。
+# 最重要：無礼・断定・煽りを禁止
+- です・ます調、常に「御社」表記。
+- 相手を責める表現・煽る表現は禁止。
+  禁止例：ダメ / 失敗 / 放置 / 危機 / 穴だらけ / 弱い / 悪い / 足りない / 最悪 / 手遅れ / 取りこぼし / 逃している
+- 上の禁止語を1つでも書きそうになったら、必ず言い換えて出力し直すこと。
+  言い換え例：
+   - 取りこぼし → 「連絡まで進まなかった可能性」
+   - 弱い/悪い → 「ここで迷いやすい可能性」
+   - 放置 → 「未調整の状態」
+- 恐怖訴求は禁止。代わりに「応募者の安心」「連絡のしやすさ」「社内工数の削減」で語る。
 
-出力フォーマット：
-【今週の結論】
-（順調 / 入口に課題 / 中身に課題）
+# 事実と推測を混ぜない
+- 数字で言えること＝事実。それ以外＝推測。
+- 推測には必ず「推測です」または「可能性があります」を付ける。
+- 入力されていない情報は作らない（例：施策内容や原因を断定しない）。
 
-【事実の可視化】
-（数値の解説と、それが経営にどう影響するか）
+# 計算ルール（必須）
+- 今週/前週の増減（±）は必ず計算して明記する。
+- 差分は入力データに計算済みで渡されるのでそれを必ず使う。
+- 前週が0の場合、割合表現はしない（「増えました/減りました」のみ）。
+- 「前週が0か：はい」の項目については、%・倍率・比率（例：◯%増、◯倍）は一切書かない（禁止）。
 
-【次の一手】
-（具体的な改善アクション1つ）
+# 出力フォーマット（この順番固定・各セクションは長くしすぎない）
+【1行まとめ】
+今週の数字では「（最も目立つ事実）」が起きています。来週は「（改善1点）」を整えると、連絡が増える可能性があります。
 
-（REMEDORA Web監査役）
+【今週の事実（3行だけ）】
+- 見た人数：今週X人（前週Y人 → ±Z人）
+- 連絡ボタン（LINE/電話）の反応：今週A回（前週B回 → ±C回）
+- 目立つ変化：増えた/減ったを1つだけ（根拠：上の数値）
+
+【今の状態（お店のたとえで説明）】
+「お店の前を通った人数（見た人数）→入口で連絡した人数（ボタン反応）」の流れで、
+“どこで迷いやすい可能性があるか”を、数字だけで説明する（原因の断定は禁止）。
+
+【連絡まで進まなかった“可能性”（推測です）】
+- 前提：ボタン反応1回が応募完了に進む割合は会社ごとに幅があるため、ここでは仮に「1〜5割」と置く（推測です）
+- 推測：今週、応募完了に進んだ可能性：◯〜◯人/週（推測です）
+- 月換算：◯〜◯人/月（推測です）
+※「応募完了数」が入力されている場合は、その実数を最優先し、上の推測は短く添えるだけにする。
+
+【来週の改善は1点だけ（作業レベルで）】
+最もインパクトが大きい修正を「1つ」だけ、作業として書く。
+
+【期待される変化（推測です）】
+- 連絡ボタン反応の増加見込み：+◯〜+◯回/週（推測です）
+- 次週の成功判定（自動で決める）：
+  * 今週が0〜2回 → +1回以上
+  * 今週が3〜9回 → +2回以上
+  * 今週が10回以上 → 今週比 +10% 以上
+
+【次に見る数字（1つだけ）】
+来週は「ボタン反応数（合計）」だけを見て判断します。
+
+【注記（1行だけ）】
+このレポートは御社の入力数値を読みやすく整理したもので、採用結果を保証するものではありません。
 `;
 
     const userPrompt = `
-業種：${industry}
-今週のLP訪問数：${visitsNum}人
-LINE/電話ボタンのクリック数：${clicksNum}回
-主な流入元：${source}
+# 入力データ
+- クライアント名：${clientName}
+- 業種：${industry}
+- 対象URL：${url || 'なし'}
+- 今週：サイトを見た人数 ${visits}人 / LINEクリック数・電話クリック数（合計） ${clicks}回
+- 前週：サイトを見た人数 ${prevVisits}人 / LINEクリック数・電話クリック数（合計） ${prevClicks}回
+- 応募完了数（任意）：${applications || 'データなし'}
+- 今週に実施した変更（任意）：${recentChanges || '特になし'}
+- 計算済み差分：見た人数の差分 ${visitsDeltaFormatted} / 反応数の差分 ${clicksDeltaFormatted}
+- 前週が0か：見た人数 ${prevVisitsIsZero} / 反応数 ${prevClicksIsZero}
+
+このデータをもとに、経営者向けのレポートを作成してください。
 `;
 
     try {
       const result = await callGemini(userPrompt, systemPrompt);
       setReport(result);
-      setReportType('ai');
       
       // Reset tools
       setActiveTool(null);
@@ -184,7 +214,7 @@ LINE/電話ボタンのクリック数：${clicksNum}回
     }
   };
 
-  // Tool Logic
+  // Tool Logic (Kept from previous version, adapted where necessary)
   const runTool = async () => {
     if (!activeTool) return;
     
@@ -195,49 +225,46 @@ LINE/電話ボタンのクリック数：${clicksNum}回
     let systemPrompt = "";
     let userPrompt = "";
 
+    // Common Guard Rail for all tools
+    const safetyGuard = `
+# 安全・品質ガードレール（必須）
+- 文体：丁寧な「です・ます」調。
+- 禁止：攻撃的・煽り表現、誇張表現（No.1/絶対/必ず/100%等）。
+- 禁止：年齢・性別・国籍などの限定表現を指示なく勝手に入れない（法務リスク回避）。
+`;
+
     // Determine prompt based on tool
     if (activeTool === 'titleGen') {
       if (!toolInputs.jobType) { setError("職種を入力してください"); setToolLoading(false); return; }
       systemPrompt = `あなたは求人広告のコピーライターです。${industry}業界の求人で、クリック率を最大化する魅力的なタイトルを5つ考えてください。
 ターゲット：地元で職を探している一般層。
-ルール：
-- 「高収入」「アットホーム」などのありきたりな表現は避ける。
-- ターゲットのインサイト（本音の悩み）を突く。
-- 30文字以内。`;
-      userPrompt = `募集職種：${toolInputs.jobType}\n媒体：${source}\n魅力的なタイトルを5案提示してください。`;
+ルール：ありきたりな表現は避け、ターゲットのインサイトを突く。30文字以内。
+${safetyGuard}`;
+      userPrompt = `募集職種：${toolInputs.jobType}\n魅力的なタイトルを5案提示してください。`;
 
     } else if (activeTool === 'textRewrite') {
       if (!toolInputs.originalText) { setError("元の文章を入力してください"); setToolLoading(false); return; }
-      systemPrompt = `あなたは敏腕編集者です。${industry}の社長が書いた少し固い、あるいは平凡な求人PR文を、求職者の感情を揺さぶる文章にリライトしてください。
-ルール：
-- 嘘はつかない。事実をベースにする。
-- 「募集しています」ではなく「あなたの力が必要です」といった当事者意識を持たせる表現へ。
-- 読みやすく、親しみやすいトーンで。`;
-      userPrompt = `元の文章：\n${toolInputs.originalText}\n\nこの文章を、より魅力的で応募したくなる文章にリライトしてください。`;
+      systemPrompt = `あなたは敏腕編集者です。${industry}の社長が書いた少し固い求人PR文を、求職者の感情を揺さぶる文章にリライトしてください。
+ルール：嘘はつかない。「あなたの力が必要です」といった当事者意識を持たせる表現へ。
+${safetyGuard}`;
+      userPrompt = `元の文章：\n${toolInputs.originalText}\n\nこの文章をリライトしてください。`;
 
     } else if (activeTool === 'photoDir') {
       if (!toolInputs.photoAppeal) { setError("アピールポイントを入力してください"); setToolLoading(false); return; }
-      systemPrompt = `あなたはプロの求人カメラマン兼ディレクターです。
-${industry}業界の求人で、求職者が「ここで働きたい」と思うような写真の構図を3つ具体的に指示してください。
-ルール：
-- 抽象的な指示（例：「笑顔の写真」）はNG。「誰が、どこで、何をしている時の、どの角度からの写真か」を具体的に書く。
-- なぜその写真が良いかの理由も添える。`;
+      systemPrompt = `あなたはプロの求人カメラマン兼ディレクターです。${industry}業界の求人で、求職者が「ここで働きたい」と思うような写真の構図を3つ指示してください。
+${safetyGuard}`;
       userPrompt = `アピールポイント：${toolInputs.photoAppeal}\nスマホで撮れる範囲で、効果的な写真の指示書を作成してください。`;
 
     } else if (activeTool === 'replyGen') {
-      systemPrompt = `あなたは${industry}業界の採用担当者です。
-応募者に対する、丁寧かつ親しみやすいLINEまたはメールの返信文を作成してください。
-ルール：
-- 堅苦しすぎる敬語（拝啓・敬具など）はLINEの場合は避ける。
-- 相手が返信しやすい配慮を入れる。
-- 必要な連絡事項を明確にする。`;
-      userPrompt = `返信の種類：${toolInputs.replyType}\n補足事項：${toolInputs.replyDetails}\nこれらを盛り込んだ返信メッセージのドラフトを作成してください。`;
+      systemPrompt = `あなたは${industry}業界の採用担当者です。応募者に対する、丁寧かつ親しみやすいLINEまたはメールの返信文を作成してください。
+${safetyGuard}`;
+      userPrompt = `返信の種類：${toolInputs.replyType}\n補足事項：${toolInputs.replyDetails}\n返信メッセージのドラフトを作成してください。`;
 
     } else if (activeTool === 'interview') {
       if (!toolInputs.targetPersona) { setError("ターゲット像を入力してください"); setToolLoading(false); return; }
-      systemPrompt = `あなたは${industry}業界のベテラン採用担当です。
-応募者の表面的なスキルではなく、「人間性」や「長く続くかどうか」を見極めるための鋭い質問リストを作成してください。`;
-      userPrompt = `採用したい人物像：${toolInputs.targetPersona}\nこの人物が自社に合うか、また覚悟があるかを見極めるための面接質問を5つ作成してください。`;
+      systemPrompt = `あなたは${industry}業界のベテラン採用担当です。「人間性」や「長く続くかどうか」を見極めるための鋭い質問リストを作成してください。
+${safetyGuard}`;
+      userPrompt = `採用したい人物像：${toolInputs.targetPersona}\n面接質問を5つ作成してください。`;
     }
 
     try {
@@ -250,12 +277,10 @@ ${industry}業界の求人で、求職者が「ここで働きたい」と思う
     }
   };
 
-  // Helper to update tool inputs
   const handleToolInputChange = (field, value) => {
     setToolInputs(prev => ({ ...prev, [field]: value }));
   };
 
-  // Copy to clipboard
   const copyToClipboard = (text, type) => {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
@@ -264,7 +289,7 @@ ${industry}業界の求人で、求職者が「ここで働きたい」と思う
     });
   };
 
-  // --- Components for Tools ---
+  // --- UI Components ---
   const ToolCard = ({ id, icon: Icon, title, desc }) => (
     <div 
       onClick={() => setActiveTool(id)}
@@ -282,102 +307,165 @@ ${industry}業界の求人で、求職者が「ここで働きたい」と思う
 
   return (
     <div className="min-h-screen bg-slate-100 py-8 px-4 font-sans text-slate-800">
-      <div className="max-w-3xl mx-auto bg-white p-6 md:p-8 rounded-xl shadow-lg">
+      <div className="max-w-4xl mx-auto bg-white p-6 md:p-8 rounded-xl shadow-lg">
         
         {/* Header */}
         <h1 className="text-xl md:text-2xl font-bold text-center mb-6 text-slate-700 border-b-2 border-slate-100 pb-4">
-          REMEDORA 週間監査レポート作成
+          REMEDORA 採用診断レポート作成（PDF用）
         </h1>
 
         {/* API Key Input */}
         <div className="mb-6 bg-slate-50 p-4 rounded-lg border border-dashed border-slate-300">
           <label className="block text-xs font-bold text-slate-500 mb-2">
-            🔑 Gemini APIキー（自動で動かない場合はここに入力）
+            🔑 Gemini APIキー
           </label>
           <input 
             type="password" 
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder="AI Studioで取得したキーを貼り付け"
+            placeholder="ここにキーを入力"
             className="w-full p-2 bg-white border border-slate-300 rounded text-sm focus:outline-none focus:border-slate-500"
           />
         </div>
 
-        {/* Main Inputs */}
-        <div className="space-y-4 mb-6">
-          <div>
-            <label className="block text-sm font-bold mb-2">業種（AI分析用）</label>
-            <select 
-              value={industry}
-              onChange={(e) => setIndustry(e.target.value)}
-              className="w-full p-3 border border-slate-300 rounded focus:outline-none focus:border-slate-500"
-            >
-              <option value="建設・建築">建設・建築</option>
-              <option value="介護・福祉">介護・福祉</option>
-              <option value="自動車整備・車検">自動車整備・車検</option>
-              <option value="一般企業">その他・一般</option>
-            </select>
+        {/* --- Main Inputs --- */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          
+          {/* Left Column: Basic Info */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-slate-500 border-b pb-1">基本情報</h3>
+            <div>
+              <label className="block text-sm font-bold mb-1">クライアント名</label>
+              <input 
+                type="text" 
+                value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                placeholder="例：株式会社〇〇建設"
+                className="w-full p-3 border border-slate-300 rounded focus:outline-none focus:border-slate-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">業種</label>
+              <select 
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
+                className="w-full p-3 border border-slate-300 rounded focus:outline-none focus:border-slate-500"
+              >
+                <option value="建設・建築">建設・建築</option>
+                <option value="介護・福祉">介護・福祉</option>
+                <option value="自動車整備・車検">自動車整備・車検</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-bold mb-1">対象URL（LPなど）</label>
+              <input 
+                type="text" 
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://..."
+                className="w-full p-3 border border-slate-300 rounded focus:outline-none focus:border-slate-500"
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-bold mb-2">今週のLP訪問数（人）</label>
-            <input 
-              type="number" 
-              value={visits}
-              onChange={(e) => setVisits(e.target.value)}
-              placeholder="例：50"
-              className="w-full p-3 border border-slate-300 rounded focus:outline-none focus:border-slate-500"
-            />
-          </div>
+          {/* Right Column: Metrics */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-slate-500 border-b pb-1 flex items-center gap-2">
+              <TrendingUp className="w-4 h-4" /> 数値入力
+            </h3>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-50 p-3 rounded">
+                <label className="block text-xs font-bold text-slate-500 mb-1">今週：見た人数</label>
+                <input 
+                  type="number" 
+                  value={visits}
+                  onChange={(e) => setVisits(e.target.value)}
+                  placeholder="例: 100"
+                  className="w-full p-2 border border-slate-300 rounded"
+                />
+              </div>
+              <div className="bg-slate-50 p-3 rounded">
+                <label className="block text-xs font-bold text-slate-500 mb-1">今週：ボタン反応数</label>
+                <input 
+                  type="number" 
+                  value={clicks}
+                  onChange={(e) => setClicks(e.target.value)}
+                  placeholder="例: 3"
+                  className="w-full p-2 border border-slate-300 rounded"
+                />
+              </div>
+            </div>
 
-          <div>
-            <label className="block text-sm font-bold mb-2">LINE/電話ボタンのクリック数（回）</label>
-            <input 
-              type="number" 
-              value={clicks}
-              onChange={(e) => setClicks(e.target.value)}
-              placeholder="例：1"
-              className="w-full p-3 border border-slate-300 rounded focus:outline-none focus:border-slate-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-bold mb-2">主な流入元</label>
-            <select 
-              value={source}
-              onChange={(e) => setSource(e.target.value)}
-              className="w-full p-3 border border-slate-300 rounded focus:outline-none focus:border-slate-500"
-            >
-              <option value="Indeed">Indeed</option>
-              <option value="Googleビジネスプロフィール">Googleマップ(GBP)</option>
-              <option value="求人チラシ">求人チラシ</option>
-              <option value="SNS">SNS</option>
-              <option value="その他">その他</option>
-            </select>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-50 p-3 rounded opacity-80">
+                <label className="block text-xs font-bold text-slate-400 mb-1 flex items-center gap-1">
+                  <History className="w-3 h-3" /> 前週：見た人数
+                </label>
+                <input 
+                  type="number" 
+                  value={prevVisits}
+                  onChange={(e) => setPrevVisits(e.target.value)}
+                  placeholder="例: 80"
+                  className="w-full p-2 border border-slate-300 rounded bg-slate-100"
+                />
+              </div>
+              <div className="bg-slate-50 p-3 rounded opacity-80">
+                <label className="block text-xs font-bold text-slate-400 mb-1 flex items-center gap-1">
+                  <History className="w-3 h-3" /> 前週：ボタン反応数
+                </label>
+                <input 
+                  type="number" 
+                  value={prevClicks}
+                  onChange={(e) => setPrevClicks(e.target.value)}
+                  placeholder="例: 2"
+                  className="w-full p-2 border border-slate-300 rounded bg-slate-100"
+                />
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-col gap-3 mb-6">
-          <button 
-            onClick={generateBasicReport}
-            className="w-full p-3.5 bg-slate-400 text-white font-bold rounded hover:bg-slate-500 transition duration-200"
-          >
-            簡易レポート作成（従来版）
-          </button>
-          <button 
-            onClick={generateAIReport}
-            disabled={loading}
-            className="w-full p-3.5 bg-slate-700 text-white font-bold rounded shadow-md hover:bg-slate-800 transition duration-200 flex items-center justify-center gap-2"
-          >
-            {loading ? <Loader2 className="animate-spin" /> : '✨'} 
-            AI深層監査レポートを作成
-          </button>
+        {/* Optional Inputs (Expandable or just listed) */}
+        <div className="mb-6 p-4 bg-slate-50 rounded-lg">
+          <h3 className="text-sm font-bold text-slate-500 mb-3">精度アップ用（任意）</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold mb-1">実際の応募完了数</label>
+              <input 
+                type="number" 
+                value={applications}
+                onChange={(e) => setApplications(e.target.value)}
+                placeholder="例：1（空欄なら推測します）"
+                className="w-full p-2 border border-slate-300 rounded"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold mb-1">今週実施した変更点</label>
+              <input 
+                type="text" 
+                value={recentChanges}
+                onChange={(e) => setRecentChanges(e.target.value)}
+                placeholder="例：写真を現場風景に変更した"
+                className="w-full p-2 border border-slate-300 rounded"
+              />
+            </div>
+          </div>
         </div>
+
+        {/* Action Button */}
+        <button 
+          onClick={generateReport}
+          disabled={loading}
+          className="w-full p-4 bg-slate-800 text-white font-bold text-lg rounded shadow-lg hover:bg-slate-900 transition duration-200 flex items-center justify-center gap-2"
+        >
+          {loading ? <Loader2 className="animate-spin" /> : '📄'} 
+          PDFコピペ用レポートを作成
+        </button>
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-start gap-3 rounded-r">
+          <div className="mt-6 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-start gap-3 rounded-r">
             <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
             <div className="text-sm whitespace-pre-wrap font-medium">{error}</div>
           </div>
@@ -385,38 +473,35 @@ ${industry}業界の求人で、求職者が「ここで働きたい」と思う
 
         {/* Report Output */}
         {report && (
-          <div className="mt-8 bg-slate-50 p-6 rounded-lg border border-slate-200 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="mt-8 bg-white p-6 rounded-lg border-2 border-slate-200 shadow-sm animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-base font-bold text-slate-600 flex items-center gap-2">
-                生成結果
+              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                診断レポート（プレビュー）
               </h2>
-              <span className={`text-xs px-2 py-1 rounded-full text-white ${reportType === 'ai' ? 'bg-slate-700' : 'bg-slate-400'}`}>
-                {reportType === 'ai' ? 'AI分析済' : '簡易版'}
-              </span>
+              <button 
+                onClick={() => copyToClipboard(report, 'report')}
+                className="py-2 px-4 bg-slate-100 border border-slate-300 text-slate-700 font-bold rounded hover:bg-slate-200 transition text-sm flex items-center gap-2"
+              >
+                {copyStatus.report ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                {copyStatus.report ? 'コピー完了' : '全文コピー'}
+              </button>
             </div>
             <textarea 
               readOnly 
               value={report}
-              className="w-full h-64 p-3 border border-slate-300 rounded text-sm bg-white focus:outline-none resize-y"
+              className="w-full h-[500px] p-4 border border-slate-200 rounded text-sm bg-slate-50 focus:outline-none resize-y font-mono leading-relaxed text-slate-700"
             />
-            <button 
-              onClick={() => copyToClipboard(report, 'report')}
-              className="mt-3 py-2 px-4 bg-white border border-slate-700 text-slate-700 font-bold rounded hover:bg-slate-50 transition text-sm flex items-center gap-2"
-            >
-              {copyStatus.report ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-              {copyStatus.report ? 'コピーしました' : '文章をコピーする'}
-            </button>
           </div>
         )}
 
         {/* Rescue Tools Section - Only shown when report exists */}
         {report && (
-          <div className="mt-10 pt-8 border-t border-slate-200">
+          <div className="mt-12 pt-8 border-t-2 border-slate-100">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-1 h-6 bg-slate-700 rounded-full"></div>
-              <h3 className="text-lg font-bold text-slate-700">🛠 監査結果に基づく お助けツール</h3>
+              <h3 className="text-lg font-bold text-slate-700">🛠 改善策の実行ツール（オプション）</h3>
             </div>
-            <p className="text-sm text-slate-500 mb-6 pl-3">今の課題に合わせて、AIに作業を代行させましょう。</p>
+            <p className="text-sm text-slate-500 mb-6 pl-3">レポートで提案した「改善点」を、ここですぐに具体化できます。</p>
 
             {/* Tool Selection Grid */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
@@ -548,7 +633,7 @@ ${industry}業界の求人で、求職者が「ここで働きたい」と思う
                           className="mt-3 py-2 px-4 bg-white border border-slate-700 text-slate-700 font-bold rounded hover:bg-slate-50 transition text-sm flex items-center gap-2"
                         >
                           {copyStatus.tool ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-                          {copyStatus.tool ? 'コピーしました' : '結果をコピー'}
+                          {copyStatus.tool ? 'コピー完了' : '結果をコピー'}
                         </button>
                       </>
                     )}
